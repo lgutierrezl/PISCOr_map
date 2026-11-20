@@ -4,10 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>RUSLE Viewer</title>
-    
-    <!-- Leaflet CSS -->
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+
     <style>
         * {
             margin: 0;
@@ -107,6 +106,31 @@
             color: #004085;
         }
 
+        .rusle-legend {
+            background: white;
+            padding: 10px 12px;
+            border-radius: 4px;
+            box-shadow: 0 1px 5px rgba(0, 0, 0, 0.4);
+            line-height: 1.5;
+            color: #333;
+        }
+
+        .rusle-legend .legend-row {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            white-space: nowrap;
+            font-size: 12px;
+        }
+
+        .rusle-legend .legend-swatch {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border: 1px solid #777;
+            flex: 0 0 14px;
+        }
+
         @media (max-width: 768px) {
             .container {
                 flex-direction: column;
@@ -126,14 +150,11 @@
 </head>
 <body>
     <div class="container">
-        <!-- Map -->
         <div id="map"></div>
 
-        <!-- Sidebar -->
         <div class="sidebar">
             <h1>Erosion de suelos</h1>
 
-            <!-- Feature Properties -->
             <div class="section">
                 <h2>RUSLE</h2>
                 <div class="properties" id="properties">
@@ -141,7 +162,6 @@
                 </div>
             </div>
 
-            <!-- Controls -->
             <div class="section">
                 <button id="zoomFit">Zoom</button>
             </div>
@@ -152,31 +172,157 @@
         </div>
     </div>
 
-    <!-- Leaflet JS -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
     <script>
-        // Initialize map
         const map = L.map('map').setView([0, 0], 2);
 
-        // Add base layer - OpenStreetMap
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: "Data by \u0026copy; \u003ca href=\"http://openstreetmap.org\"\u003eOpenStreetMap\u003c/a\u003e, under \u003ca href=\"http://www.openstreetmap.org/copyright\"\u003eODbL\u003c/a\u003e.",
+            attribution: 'Data by &copy; <a href="https://www.openstreetmap.org/">OpenStreetMap</a>, under <a href="https://www.openstreetmap.org/copyright">ODbL</a>.',
             maxZoom: 19
         }).addTo(map);
 
-        // Load GeoJSON
         let geoJSONLayer;
 
+        const RUSLE_COLORS = [
+            'darkgreen',
+            'forestgreen',
+            'yellowgreen',
+            'yellow',
+            'gold',
+            'orange',
+            'darkorange',
+            'tomato',
+            'red',
+            'darkred'
+        ];
+
+        let rusleMin = null;
+        let rusleMax = null;
+        let rusleBreaks = [];
+
+        function getRusleValue(feature) {
+            const rawValue = feature?.properties?.RUSLE;
+
+            if (rawValue === null || rawValue === undefined || rawValue === '') {
+                return null;
+            }
+
+            const value = Number(rawValue);
+            return Number.isFinite(value) ? value : null;
+        }
+
+        function createRusleScale(features) {
+            const values = features
+                .map(feature => getRusleValue(feature))
+                .filter(value => value !== null);
+
+            if (values.length === 0) {
+                rusleMin = null;
+                rusleMax = null;
+                rusleBreaks = [];
+                return;
+            }
+
+            rusleMin = Math.min(...values);
+            rusleMax = Math.max(...values);
+
+            // Nine breaks divide the range from minimum to maximum into ten equal ranges.
+            rusleBreaks = Array.from({ length: 9 }, (_, index) =>
+                rusleMin + ((rusleMax - rusleMin) * (index + 1)) / 10
+            );
+        }
+
+        function getRusleColor(feature) {
+            const value = getRusleValue(feature);
+
+            if (value === null || rusleMin === null) {
+                return '#999999';
+            }
+
+            const colorIndex = rusleBreaks.findIndex(
+                boundary => value <= boundary
+            );
+
+            return RUSLE_COLORS[colorIndex === -1 ? 9 : colorIndex];
+        }
+
+        function addRusleLegend() {
+            const legend = L.control({ position: 'bottomright' });
+
+            legend.onAdd = function() {
+                const div = L.DomUtil.create('div', 'rusle-legend');
+                let html = '<strong>RUSLE</strong>';
+
+                if (rusleMin === null) {
+                    html += '<div>No valid RUSLE values</div>';
+                    div.innerHTML = html;
+                    return div;
+                }
+
+                const format = value => Number(value).toPrecision(4);
+
+                if (rusleMin === rusleMax) {
+                    html += `
+                        <div class="legend-row">
+                            <span class="legend-swatch"
+                                  style="background: ${RUSLE_COLORS[0]}"></span>
+                            <span>${format(rusleMin)} (constant)</span>
+                        </div>
+                    `;
+                    div.innerHTML = html;
+                    return div;
+                }
+
+                RUSLE_COLORS.forEach((color, index) => {
+                    const lower = index === 0
+                        ? rusleMin
+                        : rusleBreaks[index - 1];
+
+                    const upper = index === 9
+                        ? rusleMax
+                        : rusleBreaks[index];
+
+                    const rangeLabel = index === 0
+                        ? `${format(lower)} – ≤ ${format(upper)}`
+                        : `> ${format(lower)} – ≤ ${format(upper)}`;
+
+                    html += `
+                        <div class="legend-row">
+                            <span class="legend-swatch"
+                                  style="background: ${color}"></span>
+                            <span>${rangeLabel}</span>
+                        </div>
+                    `;
+                });
+
+                div.innerHTML = html;
+                L.DomEvent.disableClickPropagation(div);
+                return div;
+            };
+
+            legend.addTo(map);
+        }
+
         fetch('pics/uhs_rus.geojson')
-            .then(response => response.json())
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`HTTP error: ${response.status}`);
+                }
+                return response.json();
+            })
             .then(data => {
+                createRusleScale(data.features || []);
+
                 geoJSONLayer = L.geoJSON(data, {
-                    style: {
-                        color: '#3388ff',
-                        weight: 2,
-                        opacity: 0.8,
-                        fillOpacity: 0.5
+                    style: function(feature) {
+                        return {
+                            color: '#3388ff',
+                            weight: 2,
+                            opacity: 0.8,
+                            fillColor: getRusleColor(feature),
+                            fillOpacity: 0.5
+                        };
                     },
                     onEachFeature: function(feature, layer) {
                         layer.on('click', function() {
@@ -185,33 +331,42 @@
                     }
                 }).addTo(map);
 
-                // Fit map to bounds
                 const bounds = geoJSONLayer.getBounds();
                 map.fitBounds(bounds, { padding: [50, 50] });
+
+                addRusleLegend();
+            })
+            .catch(error => {
+                console.error('Error loading RUSLE GeoJSON:', error);
+                alert('No se pudo cargar pics/uhs_rus.geojson');
             });
 
-        // Display feature properties
         function displayProperties(feature) {
             const propertiesDiv = document.getElementById('properties');
             propertiesDiv.innerHTML = '';
 
-            if (!feature.properties || Object.keys(feature.properties).length === 0) {
-                propertiesDiv.innerHTML = '<p style="color: #999;">No properties</p>';
+            if (!feature.properties ||
+                Object.keys(feature.properties).length === 0) {
+                propertiesDiv.innerHTML =
+                    '<p style="color: #999;">No properties</p>';
                 return;
             }
 
             for (const [key, value] of Object.entries(feature.properties)) {
                 const row = document.createElement('div');
                 row.className = 'property-row';
+
                 row.innerHTML = `
                     <div class="property-label">${key}</div>
-                    <div class="property-value">${value !== null ? String(value) : 'N/A'}</div>
+                    <div class="property-value">
+                        ${value !== null ? String(value) : 'N/A'}
+                    </div>
                 `;
+
                 propertiesDiv.appendChild(row);
             }
         }
 
-        // Zoom fit button
         document.getElementById('zoomFit').addEventListener('click', function() {
             if (geoJSONLayer) {
                 const bounds = geoJSONLayer.getBounds();
