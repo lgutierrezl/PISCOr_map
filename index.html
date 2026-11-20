@@ -26,12 +26,14 @@
 
         #map {
             flex: 1;
+            min-width: 0;
         }
 
         .sidebar {
             width: 300px;
+            flex: 0 0 300px;
             background: white;
-            box-shadow: -2px 0 5px rgba(0,0,0,0.1);
+            box-shadow: -2px 0 5px rgba(0, 0, 0, 0.1);
             overflow-y: auto;
             padding: 20px;
         }
@@ -131,19 +133,57 @@
             flex: 0 0 14px;
         }
 
+        .timeseries-panel {
+            width: min(460px, calc(100vw - 340px));
+            min-width: 280px;
+            padding: 12px;
+            background: white;
+            border-radius: 4px;
+            box-shadow: 0 1px 5px rgba(0, 0, 0, 0.4);
+        }
+
+        .timeseries-chart-wrap {
+            position: relative;
+            height: 250px;
+        }
+
+        .timeseries-empty {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 12px;
+            text-align: center;
+            color: #777;
+            font-size: 0.9em;
+            pointer-events: none;
+        }
+
         @media (max-width: 768px) {
             .container {
                 flex-direction: column;
+            }
+
+            #map {
+                height: 65%;
+                flex: 0 0 65%;
             }
 
             .sidebar {
                 width: 100%;
                 height: 35%;
                 max-height: 35vh;
+                flex: 0 0 35%;
             }
 
-            #map {
-                height: 65%;
+            .timeseries-panel {
+                width: min(460px, calc(100vw - 24px));
+                min-width: 0;
+            }
+
+            .timeseries-chart-wrap {
+                height: 200px;
             }
         }
     </style>
@@ -173,6 +213,7 @@
     </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
     <script>
         const map = L.map('map').setView([0, 0], 2);
@@ -183,6 +224,12 @@
         }).addTo(map);
 
         let geoJSONLayer;
+        let timeSeriesChart;
+        let timeSeriesEmptyMessage;
+
+        const YEARS = Array.from({ length: 26 }, (_, index) =>
+            String(2000 + index)
+        );
 
         const RUSLE_COLORS = [
             'darkgreen',
@@ -227,7 +274,7 @@
             rusleMin = Math.min(...values);
             rusleMax = Math.max(...values);
 
-            // Nine breaks divide the range from minimum to maximum into ten equal ranges.
+            // Nine equally spaced breaks divide the range into ten color ranges.
             rusleBreaks = Array.from({ length: 9 }, (_, index) =>
                 rusleMin + ((rusleMax - rusleMin) * (index + 1)) / 10
             );
@@ -248,29 +295,28 @@
         }
 
         function addRusleLegend() {
-            const legend = L.control({ position: 'bottomright' });
+            const legend = L.control({ position: 'bottomleft' });
 
             legend.onAdd = function() {
                 const div = L.DomUtil.create('div', 'rusle-legend');
                 let html = '<strong>RUSLE</strong>';
 
                 if (rusleMin === null) {
-                    html += '<div>No valid RUSLE values</div>';
-                    div.innerHTML = html;
+                    div.innerHTML = `${html}<div>No valid RUSLE values</div>`;
                     return div;
                 }
 
                 const format = value => Number(value).toPrecision(4);
 
                 if (rusleMin === rusleMax) {
-                    html += `
+                    div.innerHTML = `
+                        ${html}
                         <div class="legend-row">
                             <span class="legend-swatch"
                                   style="background: ${RUSLE_COLORS[0]}"></span>
                             <span>${format(rusleMin)} (constant)</span>
                         </div>
                     `;
-                    div.innerHTML = html;
                     return div;
                 }
 
@@ -304,6 +350,155 @@
             legend.addTo(map);
         }
 
+        function addTimeSeriesPanel() {
+            const panel = L.control({ position: 'bottomright' });
+
+            panel.onAdd = function() {
+                const div = L.DomUtil.create('div', 'timeseries-panel');
+                const chartWrap = document.createElement('div');
+                chartWrap.className = 'timeseries-chart-wrap';
+
+                const canvas = document.createElement('canvas');
+                canvas.setAttribute('aria-label', 'Annual soil loss time series');
+                canvas.setAttribute('role', 'img');
+
+                timeSeriesEmptyMessage = document.createElement('div');
+                timeSeriesEmptyMessage.className = 'timeseries-empty';
+                timeSeriesEmptyMessage.textContent =
+                    'Selecciona una unidad para ver la serie anual';
+
+                chartWrap.appendChild(canvas);
+                chartWrap.appendChild(timeSeriesEmptyMessage);
+                div.appendChild(chartWrap);
+
+                timeSeriesChart = new Chart(canvas, {
+                    type: 'line',
+                    data: {
+                        labels: YEARS,
+                        datasets: [{
+                            data: YEARS.map(() => null),
+                            borderColor: '#007bff',
+                            backgroundColor: 'rgba(0, 123, 255, 0.15)',
+                            borderWidth: 2,
+                            pointRadius: 2,
+                            pointHoverRadius: 5,
+                            tension: 0.2,
+                            spanGaps: false
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: {
+                                display: false
+                            },
+                            title: {
+                                display: false
+                            },
+                            tooltip: {
+                                callbacks: {
+                                    label: context =>
+                                        ` ${context.parsed.y ?? 'Sin dato'}`
+                                }
+                            }
+                        },
+                        scales: {
+                            x: {
+                                title: {
+                                    display: false
+                                },
+                                ticks: {
+                                    autoSkip: false,
+                                    minRotation: 45,
+                                    maxRotation: 60,
+                                    font: {
+                                        size: 10
+                                    }
+                                }
+                            },
+                            y: {
+                                title: {
+                                    display: true,
+                                    text: 'Pérdida de suelos (Tn/ha/año)'
+                                },
+                                beginAtZero: true
+                            }
+                        }
+                    }
+                });
+
+                L.DomEvent.disableClickPropagation(div);
+                L.DomEvent.disableScrollPropagation(div);
+                return div;
+            };
+
+            panel.addTo(map);
+        }
+
+        function getAnnualValue(properties, year) {
+            const rawValue = properties?.[year];
+
+            if (rawValue === null || rawValue === undefined || rawValue === '') {
+                return null;
+            }
+
+            const value = Number(rawValue);
+            return Number.isFinite(value) ? value : null;
+        }
+
+        function updateTimeSeries(feature) {
+            if (!timeSeriesChart) {
+                return;
+            }
+
+            const properties = feature?.properties || {};
+            const values = YEARS.map(year => getAnnualValue(properties, year));
+
+            timeSeriesChart.data.datasets[0].data = values;
+            timeSeriesChart.update();
+
+            const hasData = values.some(value => value !== null);
+            timeSeriesEmptyMessage.style.display = hasData ? 'none' : 'flex';
+
+            if (!hasData) {
+                timeSeriesEmptyMessage.textContent =
+                    'No hay datos anuales válidos para esta unidad';
+            }
+        }
+
+        function displayProperties(feature) {
+            const propertiesDiv = document.getElementById('properties');
+            propertiesDiv.replaceChildren();
+
+            const properties = feature?.properties;
+
+            if (!properties || Object.keys(properties).length === 0) {
+                const message = document.createElement('p');
+                message.style.color = '#999';
+                message.textContent = 'No properties';
+                propertiesDiv.appendChild(message);
+                return;
+            }
+
+            for (const [key, value] of Object.entries(properties)) {
+                const row = document.createElement('div');
+                row.className = 'property-row';
+
+                const label = document.createElement('div');
+                label.className = 'property-label';
+                label.textContent = key;
+
+                const propertyValue = document.createElement('div');
+                propertyValue.className = 'property-value';
+                propertyValue.textContent =
+                    value !== null && value !== undefined ? String(value) : 'N/A';
+
+                row.append(label, propertyValue);
+                propertiesDiv.appendChild(row);
+            }
+        }
+
         fetch('pics/uhs_rus.geojson')
             .then(response => {
                 if (!response.ok) {
@@ -327,50 +522,30 @@
                     onEachFeature: function(feature, layer) {
                         layer.on('click', function() {
                             displayProperties(feature);
+                            updateTimeSeries(feature);
                         });
                     }
                 }).addTo(map);
 
                 const bounds = geoJSONLayer.getBounds();
-                map.fitBounds(bounds, { padding: [50, 50] });
+                if (bounds.isValid()) {
+                    map.fitBounds(bounds, { padding: [50, 50] });
+                }
 
                 addRusleLegend();
+                addTimeSeriesPanel();
             })
             .catch(error => {
                 console.error('Error loading RUSLE GeoJSON:', error);
                 alert('No se pudo cargar pics/uhs_rus.geojson');
             });
 
-        function displayProperties(feature) {
-            const propertiesDiv = document.getElementById('properties');
-            propertiesDiv.innerHTML = '';
-
-            if (!feature.properties ||
-                Object.keys(feature.properties).length === 0) {
-                propertiesDiv.innerHTML =
-                    '<p style="color: #999;">No properties</p>';
-                return;
-            }
-
-            for (const [key, value] of Object.entries(feature.properties)) {
-                const row = document.createElement('div');
-                row.className = 'property-row';
-
-                row.innerHTML = `
-                    <div class="property-label">${key}</div>
-                    <div class="property-value">
-                        ${value !== null ? String(value) : 'N/A'}
-                    </div>
-                `;
-
-                propertiesDiv.appendChild(row);
-            }
-        }
-
         document.getElementById('zoomFit').addEventListener('click', function() {
             if (geoJSONLayer) {
                 const bounds = geoJSONLayer.getBounds();
-                map.fitBounds(bounds, { padding: [50, 50] });
+                if (bounds.isValid()) {
+                    map.fitBounds(bounds, { padding: [50, 50] });
+                }
             }
         });
     </script>
